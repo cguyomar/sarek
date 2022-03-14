@@ -1303,22 +1303,61 @@ tsv_bam_duplicates_marked_sample
         ["duplicates_marked_no_table_${idSample}.tsv", "${idPatient}\t${gender}\t${status}\t${idSample}\t${bam}\t${bai}\n"]
 }
 
+// STEP 2' : SplitNCigarReads
+process SplitNCigarReads {
+    label 'cpus_8'
+
+    tag "${idPatient}-${idSample}"
+
+    publishDir params.outdir, mode: params.publish_dir_mode,
+        saveAs: {
+            if (it == "${idSample}.bam.metrics") "Reports/${idSample}/MarkDuplicates/${it}"
+            else "Preprocessing/${idSample}/DuplicatesMarked/${it}"
+        }
+
+    input:
+        set idPatient, idSample, file("${idSample}.md.bam"), file("${idSample}.md.bam.bai") from bam_duplicates_marked
+        file(fasta) from ch_fasta
+        file(fastaFai) from ch_fai
+
+    output:
+        set idPatient, idSample, file("${idSample}.splitn.bam"), file("${idSample}.splitn.bam.bai") into bam_Ncigar_split
+
+    script:
+    """
+    export _JAVA_OPTIONS=-Djava.io.tmpdir=./
+
+    gatk CreateSequenceDictionary \\
+        --REFERENCE $fasta \\
+        --URI $fasta \\
+        
+    gatk SplitNCigarReads \\
+        -R $fasta \\
+        -I ${idSample}.md.bam \\
+        -O ${idSample}.splitn.bam \\
+        --create-output-bam-index
+
+    mv ${idSample}.splitn.bai ${idSample}.splitn.bam.bai 
+    """
+}
+
 if ('markduplicates' in skipQC) duplicates_marked_report.close()
 
-if (step == 'preparerecalibration') bam_duplicates_marked = inputSample
+if (step == 'preparerecalibration') bam_Ncigar_split = inputSample
 
-bam_duplicates_marked = bam_duplicates_marked.dump(tag:'MD BAM')
+bam_Ncigar_split = bam_Ncigar_split.dump(tag:'MD BAM')
 duplicates_marked_report = duplicates_marked_report.dump(tag:'MD Report')
 
 if (params.skip_markduplicates) bam_duplicates_marked = bam_mapped_merged_indexed
 
-(bamMD, bamMDToJoin, bam_duplicates_marked) = bam_duplicates_marked.into(3)
+(bamMD, bamMDToJoin, bam_Ncigar_split) = bam_Ncigar_split.into(3)
 
 bamBaseRecalibrator = bamMD.combine(intBaseRecalibrator)
 
 bamBaseRecalibrator = bamBaseRecalibrator.dump(tag:'BAM FOR BASERECALIBRATOR')
 
-// STEP 2': SENTIEON DEDUP
+
+// STEP 2'': SENTIEON DEDUP
 
 process Sentieon_Dedup {
     label 'cpus_max'
